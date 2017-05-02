@@ -67,18 +67,30 @@ class SelectorBIC(ModelSelector):
     http://www2.imm.dtu.dk/courses/02433/doc/ch6_slides.pdf
     Bayesian information criteria: BIC = -2 * logL + p * logN
     """
-
     def select(self):
         """ select the best model for self.this_word based on
-        BIC score for n between self.min_n_components and self.max_n_components
+                BIC score for n between self.min_n_components and self.max_n_components
 
-        :return: GaussianHMM object
-        """
+                :return: GaussianHMM object
+                """
         warnings.filterwarnings("ignore", category=DeprecationWarning)
-
-        # TODO implement model selection based on BIC scores
-        raise NotImplementedError
-
+        best_model = None
+        best_score = float("inf")
+        for num_states in range(self.min_n_components, self.max_n_components):
+            try:
+                hmmmodel = GaussianHMM(n_components=num_states, covariance_type="diag", n_iter=1000, random_state=self.random_state, verbose=False).fit(self.X, self.lengths)
+                logL = hmmmodel.score(self.X, self.lengths)
+                initialStateProbs = num_states
+                transitionProbs = num_states * (num_states - 1)
+                emissionProbs = len(np.diagonal(hmmmodel.means_)) + len(np.diagonal(hmmmodel.covars_))
+                p = initialStateProbs + transitionProbs + emissionProbs
+                BIC_Score = -2 * logL + p * np.log(len(self.X))
+                if BIC_Score < best_score:
+                    best_score = BIC_Score
+                    best_model = hmmmodel
+            except:
+                continue
+        return best_model
 
 class SelectorDIC(ModelSelector):
     ''' select best model based on Discriminative Information Criterion
@@ -91,9 +103,29 @@ class SelectorDIC(ModelSelector):
 
     def select(self):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
+        best_model = None
+        best_score = float("-inf")
+        for num_states in range(self.min_n_components, self.max_n_components):
+            try:
+                hmmmodel = GaussianHMM(n_components=num_states, covariance_type="diag", n_iter=1000,
+                                       random_state=self.random_state, verbose=False).fit(self.X, self.lengths)
+                logL_own = hmmmodel.score(self.X, self.lengths)
 
-        # TODO implement model selection based on DIC scores
-        raise NotImplementedError
+                logL_other_words = []
+                for word in self.hwords:
+                    if word == self.this_word:
+                        continue
+                    other_X, other_L = self.hwords[word]
+                    logL_other_words.append(hmmmodel.score(other_X, other_L))
+
+                average_other_logL = np.average(logL_other_words)
+                DIC_score = logL_own - average_other_logL
+                if DIC_score > best_score:
+                    best_score = DIC_score
+                    best_model = hmmmodel
+            except:
+                continue
+        return best_model
 
 
 class SelectorCV(ModelSelector):
@@ -104,5 +136,27 @@ class SelectorCV(ModelSelector):
     def select(self):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-        # TODO implement model selection using CV
-        raise NotImplementedError
+        best_model = None
+        best_score = float("-inf")
+        for num_states in range(self.min_n_components, self.max_n_components):
+            if len(self.sequences) == 1 :
+                continue
+            split_method = KFold(n_splits = len(self.sequences) if len(self.sequences) < 3 else 3)
+            iter_scores = []
+            for cv_train_idx, cv_test_idx in split_method.split(self.sequences):
+                try:
+                    X, L = combine_sequences(cv_train_idx, self.sequences)
+                    hmmmodel = GaussianHMM(n_components=num_states, covariance_type="diag", n_iter=1000, random_state=self.random_state, verbose=False).fit(X, L)
+                    X_test, L_test = combine_sequences(cv_test_idx, self.sequences)
+                    logL = hmmmodel.score(X_test, L_test)
+                    iter_scores.append(logL)
+                except:
+                    continue
+                avg_iter_score = np.average(iter_scores)
+                if avg_iter_score > best_score:
+                    best_model = hmmmodel
+                    best_score = avg_iter_score
+        return best_model
+
+
+
